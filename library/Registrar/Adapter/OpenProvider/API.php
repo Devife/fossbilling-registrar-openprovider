@@ -100,7 +100,7 @@ class OpenProvider_API
      * @param string $version
      * @return array|mixed|string
      */
-    function request($requesttype, $request, $data = array())
+    function request($requestMethod, $request, $data = array())
     {
         $accessToken = $this->requestAccessToken();
 
@@ -112,34 +112,44 @@ class OpenProvider_API
         }
 
         $url        = $this->endpoint . $request;
+        if ($requestMethod  === 'GET') {
+            $url .= '?' . http_build_query($data);
+        }
 
         $ch         = curl_init($url);
 
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Content-Type' => 'application/json',
+        $headers = [
             "Authorization: Bearer {$accessToken}",
-        ]);
+        ];
 
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $requesttype);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        if ($requestMethod !== 'GET') {
+            array_merge($headers, ['Content-Type' => 'application/json']);
+        }
+
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $requestMethod);
+        if ($requestMethod !== 'GET') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        }
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_USERAGENT, "OpenProvider api agent at " . gethostname());
 
         $result     = curl_exec($ch);
-        $httpcode   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $httpCode   = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 
         curl_close($ch);
 
-        $debugdata      = array(
-            'requesttype'   => $requesttype,
+        $debugData      = array(
+            'request_method'   => $requestMethod,
             'url'           => $url,
-            'postdata'      => $data,
+            'post_data'      => $data,
             'result'        => $result,
-            'httpcode'      => $httpcode
+            'http_code'      => $httpCode
         );
 
         if ($this->debug) {
-            var_dump($debugdata);
+            var_dump($debugData);
         }
 
         $result = json_decode($result, 1);

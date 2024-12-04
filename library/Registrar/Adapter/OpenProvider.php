@@ -23,7 +23,6 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
     );
 
     private const MODULE_VERSION = "0.1";
-    private const PATH_LOG = "./library/Registrar/Adapter";
     private const DIR_LOG = "logs";
     private const FILE_LOG = "openprovider.log";
 
@@ -33,21 +32,21 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             $this->config['Username'] = $options['Username'];
             unset($options['Username']);
         } else {
-            throw new Registrar_Exception('OpenProvider Registrar module error.<br>Please update configuration parameter "Reseller Username" at "Configuration -> Domain registration"');
+            throw new Registrar_Exception('OpenProvider Registrar module error. Please update configuration parameter "Reseller Username" at "Configuration -> Domain registration"', [':domain_registrar' => 'OpenProvider', ':missing' => 'OpenProvider Username'], 3001);
         }
 
         if (isset($options['Password']) && !empty($options['Password'])) {
             $this->config['Password'] = $options['Password'];
             unset($options['Password']);
         } else {
-            throw new Registrar_Exception('OpenProvider Registrar module error.<br>Please update configuration parameter "Reseller Password" at "Configuration -> Domain registration"');
+            throw new Registrar_Exception('OpenProvider Registrar module error. Please update configuration parameter "Reseller Password" at "Configuration -> Domain registration"', [':domain_registrar' => 'OpenProvider', ':missing' => 'OpenProvider Password'], 3001);
         }
 
         if (isset($options['ApiUrl']) && !empty($options['ApiUrl'])) {
             $this->config['ApiUrl'] = $options['ApiUrl'];
             unset($options['ApiUrl']);
         } else {
-            throw new Registrar_Exception('OpenProvider Registrar module error.<br>Please update configuration parameter "API url" at "Configuration -> Domain registration"');
+            throw new Registrar_Exception('OpenProvider Registrar module error. Please update configuration parameter "API url" at "Configuration -> Domain registration"', [':domain_registrar' => 'OpenProvider', ':missing' => 'OpenProvider API Url'], 3001);
         }
     }
     /**
@@ -93,7 +92,8 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
     }
 
     public function registerDomain(Registrar_Domain $domain)
-    { // Step 1: Ensure a customer handle exists
+    {
+        // Step 1: Ensure a customer handle exists
         $customerHandle = $this->_getOrCreateCustomer($domain->getContactAdmin());
 
         // Step 2: Prepare the domain registration data
@@ -106,6 +106,7 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             'owner_handle' => $customerHandle,
             'admin_handle' => $customerHandle,
             'tech_handle' => $customerHandle,
+            'billing_handle' => $customerHandle,
             'ns_group' => 'dns-openprovider',
             'autorenew' => 'default'
         ];
@@ -115,7 +116,7 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             if ($response['code'] === 0) {
                 return true;
             }
-            throw new Registrar_Exception('Failed to register domain: ' . $response['msg']);
+            return false;
         } catch (Exception $e) {
             throw new Registrar_Exception('OpenProvider API Error: ' . $e->getMessage());
         }
@@ -174,6 +175,7 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             'owner_handle' => $customerHandle,
             'admin_handle' => $customerHandle,
             'tech_handle' => $customerHandle,
+            'billing_handle' => $customerHandle,
             'ns_group' => 'dns-openprovider',
             'autorenew' => 'default',
             'auth_code' => $domain->getEpp(),
@@ -240,27 +242,35 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
         $response = $this->_request('GET', "/domains/{$domainId}");
         $opDomain = $response['data'];
 
-        $domain->setRegistrationTime((string) $opDomain['creation_date']);
-        $domain->setExpirationTime((string) $opDomain['expiration_date']);
+        $domain->setRegistrationTime(strtotime($opDomain['creation_date']));
+        $domain->setExpirationTime(strtotime($opDomain['expiration_date']));
         $domain->setPrivacyEnabled($opDomain['is_private_whois_enabled']);
+        $domain->setLocked($opDomain['is_locked']);
 
-        // create new Domain obj to return
-        $newDomain = new Registrar_Domain();
-
-        // set SLD and TLD
-        $newDomain->setSld($domain->getSld());
-        $newDomain->setTld($domain->getTld());
-        $newDomain->setRegistrationTime((string) $opDomain['creation_date']);
-        $newDomain->setExpirationTime((string) $opDomain['expiration_date']);
-        $newDomain->setPrivacyEnabled($opDomain['is_private_whois_enabled']);
+        $nameservers = $opDomain['name_servers'];
+        if (isset($nameservers[0])) {
+            $domain->setNs1($nameservers[0]['name']);
+        }
+        if (isset($nameservers[1])) {
+            $domain->setNs2($nameservers[1]['name']);
+        }
+        if (isset($nameservers[2])) {
+            $domain->setNs3($nameservers[2]['name']);
+        }
+        if (isset($nameservers[3])) {
+            $domain->setNs4($nameservers[3]['name']);
+        }
 
         $registrarContact = new Registrar_Domain_Contact();
         $adminContact = new Registrar_Domain_Contact();
         $techContact = new Registrar_Domain_Contact();
+        $billingContact = new Registrar_Domain_Contact();
+
+        // Get customer info from the api
+        $customer = $this->_getCustomer($opDomain['admin_handle']);
 
         // Set contact data on our Domain obj using info from our API call
-        foreach (['Registrant', 'Admin', 'Tech'] as $contactType) {
-            $owner = $opDomain->owner;
+        foreach (['Registrant', 'Admin', 'Tech', 'Billing'] as $contactType) {
             $contact = $registrarContact;
 
             if ($contactType == 'Admin') {
@@ -269,28 +279,29 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             if ($contactType == 'Tech') {
                 $contact = $techContact;
             }
+            if ($contactType == 'Billing') {
+                $contact = $billingContact;
+            }
 
-            $split = explode(" ", $owner->full_name);
-            $lastName = end($split);
-            $firstName = str_replace($lastName, '', $owner->full_name);
-
-            $contact->setFirstName((string) $firstName);
-            $contact->setLastName((string) $lastName);
-            // $contact->setEmail((string) $contactApi->EmailAddress);
-            // $contact->setTel((string) $contactApi->Phone);
-            // $contact->setAddress1((string) $contactApi->Address1);
-            // $contact->setAddress2((string) $contactApi->Address2);
-            // $contact->setCity((string) $contactApi->City);
-            // $contact->setState((string) $contactApi->StateProvince);
-            // $contact->setCountry((string) $contactApi->Country);
-            // $contact->setZip((string) $contactApi->PostalCode);
+            $contact->setFirstName($customer['name']['first_name']);
+            $contact->setLastName($customer['name']['last_name']);
+            $contact->setEmail($customer['email']);
+            $contact->setTelCc($customer['phone']['country_code']);
+            $contact->setTel($customer['phone']['subscriber_number']);
+            $contact->setAddress1($customer['address']['street']);
+            $contact->setCity($customer['address']['city']);
+            $contact->setState($customer['address']['state']);
+            $contact->setCountry($customer['address']['country']);
+            $contact->setZip($customer['address']['zipcode']);
+            $contact->setCompany(isset($customer['company_name']) ? $customer['company_name'] : '');
         }
 
-        $newDomain->setContactRegistrar($registrarContact);
-        $newDomain->setContactAdmin($adminContact);
-        $newDomain->setContactTech($techContact);
+        $domain->setContactRegistrar($registrarContact);
+        $domain->setContactAdmin($adminContact);
+        $domain->setContactTech($techContact);
+        $domain->setContactBilling($billingContact);
 
-        return $newDomain;
+        return $domain;
     }
 
     public function modifyNs(Registrar_Domain $domain)
@@ -328,13 +339,14 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
         $domainId = $this->_getDomainId($domain);
 
         // Step 2: Get or create the customer handle
-        $customerHandle = $this->_getOrCreateCustomer($domain->getContactAdmin());
+        $customerHandle = $this->_getOrCreateCustomer($domain->getContactAdmin(), true);
 
         // Step 3: Prepare the request data
         $data = [
             'owner_handle' => $customerHandle,
             'admin_handle' => $customerHandle,
             'tech_handle' => $customerHandle,
+            'billing_handle' => $customerHandle,
         ];
 
         // Step 4: Send the PUT request to update contact
@@ -434,15 +446,8 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
         }
     }
 
-    private function _getOrCreateCustomer(Registrar_Domain_Contact $contact)
+    private function _getOrCreateCustomer(Registrar_Domain_Contact $contact, $updateExisting = false)
     {
-        // Step 1: Check if the customer already exists by email
-        $existingCustomerHandle = $this->_findCustomerByEmail($contact->getEmail());
-        if ($existingCustomerHandle) {
-            return $existingCustomerHandle;
-        }
-
-        // Step 2: Create a new customer if not found
         $data = [
             'email' => $contact->getEmail(),
             'phone' => [
@@ -464,12 +469,25 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             ]
         ];
 
+        // Step 1: Check if the customer already exists by email
+        $existingCustomerHandle = $this->_findCustomerByEmail($contact->getEmail());
+        if ($existingCustomerHandle) {
+            if ($updateExisting) {
+                $response = $this->_request('PUT', "/customers/{$existingCustomerHandle}", $data);
+                if ($response['code'] !== 0) {
+                    throw new Registrar_Exception('Failed to update contact: ' . $response['msg']);
+                }
+            }
+
+            return $existingCustomerHandle;
+        }
+
+        // Step 2: Create a new customer if not found
         try {
             $response = $this->_request('POST', '/customers', $data);
             if (isset($response['data']['handle'])) {
                 return $response['data']['handle'];
             }
-            // var_dump(json_encode($data), $response);
             throw new Registrar_Exception('Failed to create customer: ' . $response['msg']);
         } catch (Exception $e) {
             throw new Registrar_Exception('OpenProvider API Error: ' . $e->getMessage());
@@ -486,6 +504,20 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
             $response = $this->_request('GET', '/customers', $data);
             if (!empty($response['data']['results']) && count($response['data']['results']) > 0) {
                 return $response['data']['results'][0]['handle']; // Return the customer handle
+            }
+            return null; // No matching customer found
+        } catch (Exception $e) {
+            throw new Registrar_Exception('Failed to find customer by email: ' . $e->getMessage());
+        }
+    }
+
+
+    private function _getCustomer($handle)
+    {
+        try {
+            $response = $this->_request('GET', "/customers/{$handle}");
+            if ($response['code'] === 0 && !empty($response['data'])) {
+                return $response['data']; // Return the customer data
             }
             return null; // No matching customer found
         } catch (Exception $e) {
@@ -518,7 +550,7 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
 
     private function _logResponse($method, $url, $data, $response)
     {
-        file_put_contents(self::PATH_LOG . '/' . self::DIR_LOG . '/' . self::FILE_LOG, json_encode([
+        file_put_contents(__DIR__ . '/' . self::DIR_LOG . '/' . self::FILE_LOG, json_encode([
             'method' => $method,
             'url' => $url,
             'data' => $data,
@@ -528,7 +560,7 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
 
     private function _logError($method, $url, $data, $error)
     {
-        file_put_contents(self::PATH_LOG . '/' . self::DIR_LOG . '/' . self::FILE_LOG, json_encode([
+        file_put_contents(__DIR__ . '/' . self::DIR_LOG . '/' . self::FILE_LOG, json_encode([
             'method' => $method,
             'url' => $url,
             'data' => $data,
