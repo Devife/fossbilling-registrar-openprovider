@@ -64,18 +64,16 @@ class OpenProvider_API
                 'password' => $this->loginpassword,
             );
 
-            $url        = $this->loginapiurl . '/auth/token';
+            $url        = $this->endpoint . '/auth/login';
 
-            $ch = curl_init();
+            $ch = curl_init($url);
 
             curl_setopt($ch, CURLOPT_HTTPHEADER, [
-                'Content-Type' => 'application/json',
-                'charset' => 'utf-8'
+                'Content-Type' => 'application/json'
             ]);
 
-            curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_USERAGENT, "OpenProvider api agent at " . gethostname());
 
@@ -104,29 +102,24 @@ class OpenProvider_API
      */
     function request($requesttype, $request, $data = array())
     {
-        $data = [
-            'body'          => $data
-        ];
-
         $accessToken = $this->requestAccessToken();
 
         if (empty($accessToken)) {
             $error = array();
             $error['error']['message']  = 'Request failed';
 
-            return json_encode($error);
+            return $error;
         }
 
         $url        = $this->endpoint . $request;
 
-        $ch         = curl_init();
+        $ch         = curl_init($url);
 
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'Accept: application/json',
-            'Authorization: Bearer ' . $accessToken,
+            'Content-Type' => 'application/json',
+            "Authorization: Bearer {$accessToken}",
         ]);
 
-        curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $requesttype);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
