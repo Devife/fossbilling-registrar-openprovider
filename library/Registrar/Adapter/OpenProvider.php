@@ -157,7 +157,7 @@ class Registrar_Adapter_OpenProvider extends Registrar_AdapterAbstract
 
         $response = $this->_request('POST', '/domains/check', $data);
         $result = $response['data']['results'][0] ?? [];
-        return isset($result['data']['status']) && $result['data']['status'] === 'transfer';
+        return isset($result['status']) && $result['status'] === 'active';
     }
 
     public function transferDomain(Registrar_Domain $domain)
